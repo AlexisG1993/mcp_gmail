@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Configurable triage model.** The demo reads its model from `TRIAGE_MODEL`, defaulting to `claude-haiku-5-5` instead of a hard-coded `claude-opus-5-5`. Refusal fallbacks are requested only for models that support them.
+- **`.env` support.** The demo loads an optional git-ignored `.env` file from the project root.
+
 ## [0.1.0] - 2026-11-02
 
 First release.
@@ -29,4 +36,5 @@ First release.
 - **Triage demo** (`npm run demo`). Classifies recent inbox email with the Claude API using structured output.
 - **CI.** GitHub Actions runs type-checks, tests and a build on Node 22 and 24.
 
+[Unreleased]: https://github.com/AlexisG1993/mcp_gmail/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/AlexisG1993/mcp_gmail/releases/tag/v0.1.0

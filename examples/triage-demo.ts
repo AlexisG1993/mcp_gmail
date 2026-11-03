@@ -5,7 +5,8 @@
  * reads the 10 most recent inbox emails through its tools, asks Claude to
  * classify each one with structured JSON output, and prints a table.
  *
- * Requires a completed `npm run auth` and ANTHROPIC_API_KEY in the environment.
+ * Requires a completed `npm run auth` and ANTHROPIC_API_KEY (in the environment or a
+ * git-ignored .env file). TRIAGE_MODEL selects the Claude model (default claude-haiku-5-5).
  * Nothing is written to the mailbox: only the read tools are called.
  */
 import { existsSync } from 'node:fs';
@@ -17,9 +18,21 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
 import { z } from 'zod';
 
-const MODEL = 'claude-opus-5-5';
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// Optional git-ignored .env in the project root. Variables already set in the shell win.
+const ENV_FILE = path.join(PROJECT_ROOT, '.env');
+if (existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
+
+// Any current Claude model id works. Classification is a small, high-volume task,
+// so the default is the cheapest current model; set TRIAGE_MODEL to compare others.
+const MODEL = process.env.TRIAGE_MODEL?.trim() || 'claude-haiku-5-5';
+
+// Models that accept server-side refusal fallbacks. Others simply decline, which
+// the demo reports in the table instead of failing.
+const FALLBACK_MODELS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5']);
 const EMAIL_COUNT = 10;
-const SERVER_ENTRY = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist/index.js');
+const SERVER_ENTRY = path.join(PROJECT_ROOT, 'dist', 'index.js');
 
 const Classification = z.object({
   type: z.enum(['customer', 'vendor', 'admin', 'other']),
@@ -109,8 +122,7 @@ async function classify(anthropic: Anthropic, email: string): Promise<Classifica
       // Classification does not need deep reasoning; low effort keeps it fast and cheap.
       output_config: { effort: 'low', format: betaZodOutputFormat(Classification) },
       // If a safety classifier declines, the API retries on a suitable fallback model in the same call.
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
+      ...(FALLBACK_MODELS.has(MODEL) ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: `<email>\n${email}\n</email>` }],
     });

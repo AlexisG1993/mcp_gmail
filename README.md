@@ -269,7 +269,7 @@ To keep the files elsewhere, add `--env GMAIL_TOKEN_PATH=/secure/path/token.json
 
 1. It starts the server over stdio with the official MCP client.
 2. It reads the 10 most recent inbox emails through `search_emails` and `get_email`.
-3. It asks Claude (`claude-opus-5-5`) to classify each one, using structured JSON output validated against a zod schema:
+3. It asks Claude to classify each one, using structured JSON output validated against a zod schema:
    - type: `customer`, `vendor`, `admin` or `other`
    - priority: `high`, `normal` or `low`
 4. It prints a table with a one-line reason for each classification.
@@ -278,6 +278,15 @@ To keep the files elsewhere, add `--env GMAIL_TOKEN_PATH=/secure/path/token.json
 export ANTHROPIC_API_KEY=...       # PowerShell: $env:ANTHROPIC_API_KEY = "..."
 npm run demo
 ```
+
+The demo also reads a git-ignored `.env` file in the project root; variables already set in the shell take precedence.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | (required) | Claude API key |
+| `TRIAGE_MODEL` | `claude-haiku-5-5` | Claude model used for classification |
+
+The model is a setting, not a code change. Classification is a small, high-volume task, so the default is the lowest-cost current model. Set `TRIAGE_MODEL=claude-sonnet-5-5` or `claude-opus-5-5` to compare quality against cost on the same inbox. For models that support it, a request declined by a safety classifier is automatically retried on a fallback model. With other models, a declined email is shown as such in the table.
 
 The demo calls only read tools. It passes the server only the Gmail path variables, never the API key. It also tells the model to treat email content as untrusted data, never as instructions.
 
