@@ -8,6 +8,10 @@ Least-privilege Gmail access for AI agents over the Model Context Protocol: sear
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![MCP SDK](https://img.shields.io/badge/MCP%20TypeScript%20SDK-v2-555555)
 
+![npm run demo classifying a test inbox: a damaged-order complaint is marked customer/high, a supplier invoice vendor/normal, a newsletter other/low](docs/triage-demo.png)
+
+<sub>Real output of the [triage demo](#triage-demo) against a test inbox, here run with Gemini (`TRIAGE_PROVIDER=gemini`). Addresses and names are blurred.</sub>
+
 ## Contents
 
 - [What it is](#what-it-is)
@@ -269,7 +273,7 @@ To keep the files elsewhere, add `--env GMAIL_TOKEN_PATH=/secure/path/token.json
 
 1. It starts the server over stdio with the official MCP client.
 2. It reads the 10 most recent inbox emails through `search_emails` and `get_email`.
-3. It asks Claude to classify each one, using structured JSON output validated against a zod schema:
+3. It asks a model (Claude by default, or Gemini) to classify each one, using structured JSON output validated against a zod schema:
    - type: `customer`, `vendor`, `admin` or `other`
    - priority: `high`, `normal` or `low`
 4. It prints a table with a one-line reason for each classification.
@@ -283,12 +287,14 @@ The demo also reads a git-ignored `.env` file in the project root; variables alr
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | (required) | Claude API key |
-| `TRIAGE_MODEL` | `claude-haiku-5-5` | Claude model used for classification |
+| `TRIAGE_PROVIDER` | `anthropic` | Model vendor: `anthropic` or `gemini` |
+| `ANTHROPIC_API_KEY` | (required for `anthropic`) | Claude API key |
+| `GEMINI_API_KEY` | (required for `gemini`) | Gemini API key from Google AI Studio |
+| `TRIAGE_MODEL` | `claude-haiku-5-5` / `gemini-flash-lite-latest` | Model used for classification |
 
-The model is a setting, not a code change. Classification is a small, high-volume task, so the default is the lowest-cost current model. Set `TRIAGE_MODEL=claude-sonnet-5-5` or `claude-opus-5-5` to compare quality against cost on the same inbox. For models that support it, a request declined by a safety classifier is automatically retried on a fallback model. With other models, a declined email is shown as such in the table.
+The provider and the model are settings, not code changes. The MCP server never talks to a model, so switching vendors touches only the demo, and both providers are held to the same output schema. Classification is a small, high-volume task, so each default is a low-cost, fast model. Set `TRIAGE_MODEL=claude-sonnet-5-5` or `claude-opus-5-5` to compare quality against cost on the same inbox. For Claude models that support it, a request declined by a safety classifier is automatically retried on a fallback model. Otherwise a declined email is shown as such in the table.
 
-The demo calls only read tools. It passes the server only the Gmail path variables, never the API key. It also tells the model to treat email content as untrusted data, never as instructions.
+The demo calls only read tools. It passes the server only the Gmail path variables, never an API key. It also tells the model to treat email content as untrusted data, never as instructions.
 
 ## Design decisions
 
@@ -378,7 +384,7 @@ tests/
   errors.test.ts     error handling and retries
   server.test.ts     input validation and tool results
 examples/
-  triage-demo.ts     MCP client + Claude API classification
+  triage-demo.ts     MCP client + Claude or Gemini classification
 ```
 
 ## Tests

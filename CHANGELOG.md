@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Added
+
+- **Gemini provider for the triage demo.** `TRIAGE_PROVIDER=gemini` with `GEMINI_API_KEY` runs the same classification on Gemini with the same output schema. Claude remains the default.
+- **README screenshot** of real `npm run demo` output, with addresses and names blurred.
+
 ### Changed
 
 - **Configurable triage model.** The demo reads its model from `TRIAGE_MODEL`, defaulting to `claude-haiku-5-5` instead of a hard-coded `claude-opus-5-5`. Refusal fallbacks are requested only for models that support them.
