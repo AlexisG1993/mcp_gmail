@@ -134,7 +134,10 @@ export function createServer(gmail: GmailProvider = () => getGmail()): McpServer
     {
       title: 'Read an email',
       description:
-        'Read one email: headers, plain-text body (HTML converted to text if there is no plain part) and attachment names and sizes. Attachment contents are never returned.',
+        'Read one email: headers including Reply-To, sender authentication (SPF, DKIM, DMARC with domains), ' +
+        'the body as text, and attachment names and sizes. Plain text is preferred; the HTML version (with link ' +
+        'targets kept) is used or added when the plain part is a stub or says something different. "Note:" lines ' +
+        'flag an unauthenticated From domain, hidden HTML text and similar warnings. Attachment contents are never returned.',
       inputSchema: getEmailInput,
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
@@ -200,8 +203,8 @@ export function createServer(gmail: GmailProvider = () => getGmail()): McpServer
           profile.data.emailAddress ?? undefined,
         );
 
-        // A 5xx may come back after Gmail already saved the draft, so only
-        // rate limits (rejected before Gmail acted) are retried here.
+        // A 5xx or a timeout may come after Gmail already saved the draft, so
+        // only rate limits (rejected before Gmail acted) are retried here.
         const draft = await withRetry(
           'drafts.create',
           () =>

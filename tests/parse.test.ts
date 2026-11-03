@@ -4,12 +4,14 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_BODY_CHARS,
   decodeBase64Url,
+  authenticationSummary,
   decodeEntities,
   extractBody,
   formatEmail,
   formatSummaries,
   formatThread,
   getHeader,
+  hasHiddenHtml,
   htmlToText,
   parseMessage,
   sortOldestFirst,
@@ -181,6 +183,19 @@ describe('htmlToText and decodeEntities', () => {
     expect(htmlToText('<a href="javascript:alert(1)">Click</a>')).toBe('Click');
   });
 
+  it.each([
+    ['an entity-encoded scheme', '<a href="&#104;ttps://evil.example/x">Bank</a>', 'Bank (https://evil.example/x)'],
+    ['a protocol-relative URL', '<a href="//evil.example/x">Bank</a>', 'Bank (//evil.example/x)'],
+    ['">" in an earlier attribute', '<a title="a>b" href="https://evil.example">Bank</a>', 'Bank (https://evil.example)'],
+    ['"&" in the target', '<a href="https://x.example/?a=1&amp;b=2">Go</a>', 'Go (https://x.example/?a=1&b=2)'],
+  ])('keeps link targets with %s', (_label, html, text) => {
+    expect(htmlToText(html)).toBe(text);
+  });
+
+  it('strips tags with ">" inside quoted attributes', () => {
+    expect(htmlToText('<img alt="a>b" src="x.png"><p data-x=\'1>2\'>Hello</p>')).toBe('Hello');
+  });
+
   it('drops unterminated comments and scripts to the end, like a browser', () => {
     expect(htmlToText('Visible<!-- never closed <p>hidden')).toBe('Visible');
     expect(htmlToText('Visible<script>never closed')).toBe('Visible');
@@ -246,5 +261,103 @@ describe('threads', () => {
     const text = formatThread('t-100', sorted.map(parseMessage));
     expect(text.startsWith('Thread t-100: 2 message(s), oldest first.')).toBe(true);
     expect(text.indexOf('First message.')).toBeLessThan(text.indexOf('Second message (reply).'));
+  });
+});
+
+describe('sender authentication', () => {
+  const auth = (value: string, name = 'Authentication-Results') => [{ name, value }];
+
+  it('reports each verdict with the domain it applies to', () => {
+    const headers = auth(
+      'mx.google.com; dkim=pass header.i=@evil.example header.s=s1; spf=pass (google.com: domain of x@evil.example designates 1.2.3.4) smtp.mailfrom=x@evil.example; dmarc=fail (p=REJECT) header.from=bank.example',
+    );
+    expect(authenticationSummary(headers)).toBe('dkim=pass (evil.example) spf=pass (evil.example) dmarc=fail (bank.example)');
+  });
+
+  it('ignores verdict-like text in comments and property values', () => {
+    const headers = auth(
+      'mx.google.com; spf=fail (dmarc=pass) smtp.mailfrom=dmarc=pass@evil.example; dmarc=fail header.from=bank.example',
+    );
+    expect(authenticationSummary(headers)).toBe('spf=fail (evil.example) dmarc=fail (bank.example)');
+  });
+
+  it("reads only Gmail's own header, not one the sender added", () => {
+    const headers = [
+      { name: 'Authentication-Results', value: 'attacker.example; dmarc=pass header.from=bank.example' },
+      { name: 'Authentication-Results', value: 'mx.google.com; dmarc=fail header.from=bank.example' },
+    ];
+    expect(authenticationSummary(headers)).toBe('dmarc=fail (bank.example)');
+    expect(authenticationSummary([headers[0] as gmail_v1.Schema$MessagePartHeader])).toBe('');
+  });
+
+  it('adds a note when the From domain is not authenticated', () => {
+    const email = parseMessage({
+      id: 'm',
+      payload: {
+        headers: [
+          { name: 'From', value: 'Bank <alerts@bank.example>' },
+          ...auth('mx.google.com; dkim=pass header.d=evil.example; dmarc=fail header.from=bank.example'),
+        ],
+      },
+    });
+    expect(email.notes[0]).toBe('The From domain (bank.example) is not authenticated: DMARC fail.');
+  });
+});
+
+describe('hidden HTML', () => {
+  it.each([
+    `<div style="font-family:'Arial';display:none">x</div>`,
+    '<div hidden>x</div>',
+    '<p hidden="">x</p>',
+    '<span style="color:#fff;background-color:#fff">x</span>',
+    '<span style="color: white; background: WHITE">x</span>',
+    '<span style="font-size:0px">x</span>',
+    '<span style="opacity:0">x</span>',
+    "<div style='max-height:0;overflow:hidden'>x</div>",
+    '<div style="visibility: hidden !important">x</div>',
+  ])('detects %s', (html) => {
+    expect(hasHiddenHtml(html)).toBe(true);
+  });
+
+  it.each([
+    '<p style="font-size:0.9em;opacity:0.8">x</p>',
+    '<span style="color:#fff;background:#003366">x</span>',
+    '<input type="text" data-hidden="no">',
+    '<p>The hidden gem of our collection</p>',
+  ])('does not flag %s', (html) => {
+    expect(hasHiddenHtml(html)).toBe(false);
+  });
+});
+
+describe('plain and HTML versions', () => {
+  const both = (plain: string, html: string) =>
+    extractBody({
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/plain', body: { data: Buffer.from(plain).toString('base64url') } },
+        { mimeType: 'text/html', body: { data: Buffer.from(html).toString('base64url') } },
+      ],
+    });
+
+  it('shows both, with a note, when they say different things', () => {
+    const { text, notes } = both(
+      'Hi, your order shipped. Thanks for shopping with us today!',
+      '<p>Account locked. <a href="https://evil.example">Sign in now</a> or lose access permanently.</p>',
+    );
+    expect(text).toContain('your order shipped');
+    expect(text).toContain('--- HTML version ---');
+    expect(text).toContain('Sign in now (https://evil.example)');
+    expect(notes).toContain(
+      'The plain-text and HTML versions differ in content, so both are shown. A person reading in Gmail sees the HTML version.',
+    );
+  });
+
+  it('shows only the plain text when the versions match', () => {
+    const { text, notes } = both(
+      'Your order #42 has shipped and is on its way.',
+      '<p>Your order <b>#42</b> has shipped and is on its way.</p>',
+    );
+    expect(text).toBe('Your order #42 has shipped and is on its way.');
+    expect(notes).toEqual([]);
   });
 });

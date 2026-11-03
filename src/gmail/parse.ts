@@ -171,7 +171,12 @@ export function decodeEntities(text: string): string {
   });
 }
 
-const LINK_TAG = /<a\b([^<>]*)>|<\/a\s*>/gi;
+// Tag attributes, allowing ">" inside quoted values (title="a>b"). A quoted
+// value cannot run past the next "<", which keeps every match linear.
+const ATTRS = String.raw`(?:[^<>"']|"[^"<]*"|'[^'<]*')*`;
+const tag = (body: string, flags = 'gi') => new RegExp(`<${body}`, flags);
+
+const LINK_TAG = tag(`a\\b(${ATTRS})>|<\\/a\\s*>`);
 const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>]+))/i;
 
 /**
@@ -187,24 +192,47 @@ function inlineLinks(html: string): string {
     last = m.index + m[0].length;
     if (m[1] !== undefined) {
       const h = HREF.exec(m[1]);
-      const href = (h?.[1] ?? h?.[2] ?? h?.[3] ?? '').trim();
-      open = /^(https?:|mailto:)/i.test(href) ? { href: href.replace(/^mailto:/i, ''), start: out.length } : undefined;
+      // Entities are decoded first, so "&#104;ttps://" is recognized as https.
+      const href = decodeEntities(h?.[1] ?? h?.[2] ?? h?.[3] ?? '').trim();
+      open = /^(https?:|mailto:|\/\/)/i.test(href) ? { href: href.replace(/^mailto:/i, ''), start: out.length } : undefined;
     } else if (open) {
-      const text = out.slice(open.start).replace(/<[^<>]*>/g, '').trim();
-      if (text !== open.href) out += ` (${open.href})`;
+      const text = decodeEntities(out.slice(open.start).replace(ANY_TAG, '')).trim();
+      // Entities in the target are left encoded; the final decode pass in htmlToText handles them once.
+      if (text !== open.href) out += ` (${open.href.replace(/&/g, '&amp;')})`;
       open = undefined;
     }
   }
   return out + html.slice(last);
 }
 
-// Inline styles that hide text from a human reader while it stays in the markup.
-const HIDDEN_STYLE =
-  /style\s*=\s*["'][^"'<>]*(display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?![.\d]*[1-9])|opacity\s*:\s*0(?![.\d]*[1-9]))/i;
+const ANY_TAG = tag(`${ATTRS}>`, 'g');
+const STYLE_ATTR = /\bstyle\s*=\s*(?:"([^"<>]*)"|'([^'<>]*)')/gi;
+const HIDDEN_ATTR = tag(`[a-z][a-z0-9]*\\b[^<>]*?\\shidden(?=[\\s/>=])`, 'i');
 
-/** True when the HTML has inline-styled hidden elements, a common way to show a model text a person never sees. */
+// Declarations that hide text from a human reader while it stays in the markup.
+const HIDING_DECLARATION =
+  /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden|(?:font-size|max-height|height|width)\s*:\s*0(?:[a-z%]*)?\s*(?:!important)?\s*(?:;|$)|opacity\s*:\s*0(?:\.0+)?\s*(?:!important)?\s*(?:;|$))/i;
+
+function cssValue(style: string, property: string): string | undefined {
+  const m = new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`, 'i').exec(style);
+  return m?.[1]?.trim().toLowerCase().replace(/\s+/g, '').replace(/!important$/, '');
+}
+
+/**
+ * True when the HTML contains text styled so a person cannot see it: display
+ * or visibility off, zero size or opacity, the `hidden` attribute, or text in
+ * the same colour as its own background. Only inline styles are checked.
+ */
 export function hasHiddenHtml(html: string): boolean {
-  return HIDDEN_STYLE.test(html);
+  if (HIDDEN_ATTR.test(html)) return true;
+  for (const m of html.matchAll(STYLE_ATTR)) {
+    const style = m[1] ?? m[2] ?? '';
+    if (HIDING_DECLARATION.test(style)) return true;
+    const color = cssValue(style, 'color');
+    const background = cssValue(style, 'background-color') ?? cssValue(style, 'background');
+    if (color !== undefined && color === background) return true;
+  }
+  return false;
 }
 
 /**
@@ -227,10 +255,12 @@ export function htmlToText(html: string): string {
       .replace(/<br\s*\/?>/gi, '\n')
       // List items and table rows start a line; their closing tags add nothing,
       // so consecutive items do not get blank lines between them.
-      .replace(/<li\b[^<>]*>/gi, '\n- ')
+      .replace(tag(`li\\b${ATTRS}>`), '\n- ')
       .replace(/<\/(p|div|ul|ol|table|blockquote|h[1-6])\s*>/gi, '\n')
-      .replace(/<(p|div|tr|table|blockquote|h[1-6])\b[^<>]*>/gi, '\n')
+      .replace(tag(`(?:p|div|tr|table|blockquote|h[1-6])\\b${ATTRS}>`), '\n')
       .replace(/<\/t[dh]\s*>/gi, '\t')
+      .replace(ANY_TAG, '')
+      // Anything left is a malformed tag, such as one with an unbalanced quote.
       .replace(/<[^<>]*>/g, ''),
   )
     .replace(/[ \t ]+/g, ' ')
@@ -270,6 +300,11 @@ export function extractBody(payload: MessagePart | null | undefined): {
   if (plain && html.length > 2 * plain.length) {
     text = html;
     notes.push('The plain-text part is much shorter than the HTML part, so the HTML version is shown.');
+  } else if (plain && html && versionsDiffer(plain, html)) {
+    // A sender can put harmless text in the plain part and something else in
+    // the HTML a person sees. Showing both keeps the model from being blind to it.
+    text = `${plain}\n\n--- HTML version ---\n\n${html}`;
+    notes.push('The plain-text and HTML versions differ in content, so both are shown. A person reading in Gmail sees the HTML version.');
   }
   if (out.html.some(hasHiddenHtml)) {
     notes.push('The HTML contains hidden elements; their text is included here, but a person reading in Gmail may not see it.');
@@ -278,15 +313,78 @@ export function extractBody(payload: MessagePart | null | undefined): {
   return { text, attachments: out.attachments, notes };
 }
 
-/** Compact SPF/DKIM/DMARC verdicts, e.g. "spf=pass dkim=pass dmarc=fail". Empty when Gmail added no results. */
-export function authenticationSummary(headers: Header[] | null | undefined): string {
-  const results = getHeader(headers, 'Authentication-Results').slice(0, 5_000);
-  const verdicts = new Map<string, string>();
-  for (const m of results.matchAll(/\b(spf|dkim|dmarc)=([a-z]+)/gi)) {
-    const method = (m[1] as string).toLowerCase();
-    if (!verdicts.has(method)) verdicts.set(method, (m[2] as string).toLowerCase());
+function words(text: string): Set<string> {
+  return new Set(text.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []);
+}
+
+/** True when the HTML version has substantial wording the plain version lacks. */
+function versionsDiffer(plain: string, html: string): boolean {
+  const plainWords = words(plain);
+  const htmlWords = [...words(html)];
+  const missing = htmlWords.filter((w) => !plainWords.has(w)).length;
+  return missing >= 5 && missing > 0.3 * htmlWords.length;
+}
+
+export interface AuthResult {
+  method: 'spf' | 'dkim' | 'dmarc';
+  result: string;
+  /** The domain the result applies to: DKIM signer, SPF envelope sender or DMARC From domain. */
+  domain: string;
+}
+
+// The property that names the authenticated domain, per method.
+const AUTH_DOMAIN_PROPS = {
+  dkim: ['header.d', 'header.i'],
+  spf: ['smtp.mailfrom', 'smtp.helo'],
+  dmarc: ['header.from'],
+} as const;
+
+/**
+ * Parses the Authentication-Results header Gmail adds on receipt (RFC 8601).
+ * Only a header whose authserv-id is mx.google.com is read, and Gmail puts its
+ * own above any the sender included, so the first such header is Gmail's.
+ * Comments in parentheses are removed before parsing, so text such as
+ * "smtp.mailfrom=dmarc=pass@evil.example" cannot pose as a verdict.
+ */
+export function parseAuthResults(headers: Header[] | null | undefined): AuthResult[] {
+  const header = (headers ?? []).find(
+    (h) => h.name?.toLowerCase() === 'authentication-results' && /^\s*mx\.google\.com\s*;/i.test(h.value ?? ''),
+  );
+  let value = (header?.value ?? '').slice(0, 5_000);
+  for (let i = 0; i < 5 && /\([^()]*\)/.test(value); i++) value = value.replace(/\([^()]*\)/g, ' ');
+
+  const results: AuthResult[] = [];
+  for (const resinfo of value.split(';').slice(1)) {
+    const m = /^\s*(spf|dkim|dmarc)\s*=\s*([a-z]+)\b(.*)$/is.exec(resinfo);
+    if (!m) continue;
+    const method = (m[1] as string).toLowerCase() as AuthResult['method'];
+    const props = new Map(
+      [...(m[3] as string).matchAll(/\b([a-z]+\.[a-z-]+)\s*=\s*("[^"]*"|\S+)/gi)].map((p) => [
+        (p[1] as string).toLowerCase(),
+        (p[2] as string).replace(/"/g, ''),
+      ]),
+    );
+    const raw = AUTH_DOMAIN_PROPS[method].map((k) => props.get(k)).find(Boolean) ?? '';
+    results.push({ method, result: (m[2] as string).toLowerCase(), domain: raw.replace(/^.*@/, '').toLowerCase() });
   }
-  return [...verdicts].map(([method, verdict]) => `${method}=${verdict}`).join(' ');
+  return results;
+}
+
+/** Compact verdicts with their domains, e.g. "spf=pass (evil.example) dkim=pass (evil.example) dmarc=fail (bank.example)". */
+export function authenticationSummary(headers: Header[] | null | undefined): string {
+  return parseAuthResults(headers)
+    .map((r) => `${r.method}=${r.result}${r.domain ? ` (${r.domain})` : ''}`)
+    .join(' ');
+}
+
+/** A warning when the From domain is not the one that authenticated, the core of most spoofing. */
+function authenticationNote(headers: Header[] | null | undefined): string | undefined {
+  const results = parseAuthResults(headers);
+  if (results.length === 0) return undefined;
+  const fromDomain = /@([^>\s]+)/.exec(getHeader(headers, 'From'))?.[1]?.toLowerCase() ?? '';
+  const dmarc = results.find((r) => r.method === 'dmarc');
+  if (dmarc?.result === 'pass') return undefined;
+  return `The From domain${fromDomain ? ` (${fromDomain})` : ''} is not authenticated: DMARC ${dmarc?.result ?? 'has no result'}.`;
 }
 
 export function truncate(text: string, max = MAX_BODY_CHARS): { text: string; truncated: boolean } {
@@ -297,6 +395,8 @@ export function truncate(text: string, max = MAX_BODY_CHARS): { text: string; tr
 export function parseMessage(message: Message): ParsedEmail {
   const headers = message.payload?.headers;
   const { text, attachments, notes } = extractBody(message.payload);
+  const authNote = authenticationNote(headers);
+  if (authNote) notes.unshift(authNote);
   const body = truncate(text);
   return {
     id: message.id ?? '',

@@ -55,6 +55,11 @@ export function isServerError(info: ErrorInfo): boolean {
   return info.status !== undefined && info.status >= 500 && info.status <= 599;
 }
 
+/** No response within GMAIL_TIMEOUT_MS; gaxios reports this as code `TimeoutError`. */
+export function isTimeout(info: ErrorInfo): boolean {
+  return info.code === 'TimeoutError';
+}
+
 /**
  * A readable message for any Gmail failure that is not an auth problem.
  * Auth failures (expired sign-in, missing scope) are recognized first by
@@ -66,6 +71,7 @@ export function describeGmailError(err: unknown): string {
 
   if (isRateLimit(info)) return 'Gmail rate limit reached, even after retrying. Wait a minute and try again.';
   if (isServerError(info)) return `Gmail is temporarily unavailable (HTTP ${status}), even after retrying. Try again shortly.`;
+  if (isTimeout(info)) return 'Gmail did not respond in time. Try again shortly.';
   if (status === 404) return 'Gmail found no message or thread with that id. It may have been deleted, or the id is wrong.';
   if (status === 403 && (reason === 'accessNotConfigured' || /has not been used|is disabled/i.test(message))) {
     return 'The Gmail API is not enabled for this Google Cloud project. Enable it in Google Cloud Console, then try again.';

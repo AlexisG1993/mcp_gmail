@@ -4,7 +4,7 @@ import { google, type gmail_v1 } from 'googleapis';
 import { OAuth2Client, type Credentials } from 'google-auth-library';
 import { GMAIL_SCOPES, loadConfig, type Config } from '../config.js';
 import { log } from '../log.js';
-import { errorInfo, isRateLimit, isServerError } from './errors.js';
+import { errorInfo, isRateLimit, isServerError, isTimeout } from './errors.js';
 
 const RUN_AUTH = 'Run `npm run auth` in the project folder to sign in.';
 
@@ -128,7 +128,8 @@ export function getGmail(config: Config = loadConfig()): Promise<gmail_v1.Gmail>
   cachedClient ??= createAuthorizedClient(config)
     // googleapis retries 429/5xx on its own by default. That is switched off so
     // withRetry below is the single, explicit retry policy.
-    .then((auth) => google.gmail({ version: 'v1', auth, retry: false }))
+    // Every request gets a deadline, so a stalled connection cannot hang a tool call.
+    .then((auth) => google.gmail({ version: 'v1', auth, retry: false, timeout: GMAIL_TIMEOUT_MS }))
     .catch((err: unknown) => {
       cachedClient = undefined;
       throw err;
@@ -172,7 +173,7 @@ export interface RetryOptions {
   /** Delay before the first retry; doubles each time. */
   baseDelayMs?: number;
   /**
-   * Retry 5xx responses. Safe for reads. Turn off for calls that create
+   * Retry 5xx responses and timeouts. Safe for reads. Turn off for calls that create
    * something, where a 5xx may have succeeded on Gmail's side and a retry
    * would create a duplicate. Rate limits are always retried: those requests
    * were rejected before Gmail acted on them.
@@ -183,6 +184,9 @@ export interface RetryOptions {
 }
 
 const MAX_RETRY_DELAY_MS = 8_000;
+
+/** Per-request deadline for Gmail API calls. */
+export const GMAIL_TIMEOUT_MS = 30_000;
 
 /**
  * Runs a Gmail request, retrying rate limits (429, or 403 with a rate-limit
@@ -197,14 +201,15 @@ export async function withRetry<T>(label: string, request: () => Promise<T>, opt
       return await request();
     } catch (err) {
       const info = errorInfo(err);
-      const retryable = isRateLimit(info) || (retryServerErrors && isServerError(info));
+      const retryable = isRateLimit(info) || (retryServerErrors && (isServerError(info) || isTimeout(info)));
       if (!retryable || attempt >= attempts) throw err;
 
       const backoff = baseDelayMs * 2 ** (attempt - 1);
       const jittered = backoff / 2 + (Math.random() * backoff) / 2;
       const delay = Math.min(MAX_RETRY_DELAY_MS, Math.max(jittered, (info.retryAfterSeconds ?? 0) * 1000));
       const reason = info.reason ? ` ${info.reason}` : '';
-      log('warn', `${label}: HTTP ${info.status}${reason}; retry ${attempt} of ${attempts - 1} in ${Math.round(delay)} ms`);
+      const what = isTimeout(info) ? 'timed out' : `HTTP ${info.status}${reason}`;
+      log('warn', `${label}: ${what}; retry ${attempt} of ${attempts - 1} in ${Math.round(delay)} ms`);
       await sleep(delay);
     }
   }

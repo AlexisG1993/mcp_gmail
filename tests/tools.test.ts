@@ -138,7 +138,8 @@ describe('get_email', () => {
     await connect(fakeGmail({ 'm-1': email }).client);
     const { text } = await call('get_email', { message_id: 'm-1' });
     expect(text).toContain('Reply-To: Billing <billing@attacker.example>');
-    expect(text).toContain('Sender authentication: dkim=fail spf=softfail dmarc=fail');
+    expect(text).toContain('Sender authentication: dkim=fail (bank.example) spf=softfail dmarc=fail');
+    expect(text).toContain('Note: The From domain (example.com) is not authenticated: DMARC fail.');
     expect(text).toContain('Sign in to Bank (https://bank-login.attacker.example/verify)');
   });
 
@@ -156,8 +157,23 @@ describe('get_email', () => {
     expect(text).toContain('Your package ships on Monday');
   });
 
-  it('returns a hostile 1 MB message quickly and truncated', async () => {
-    const email = message('m-1', { html: '<'.repeat(500_000) + '<li'.repeat(150_000) + ' '.repeat(50_000) });
+  it('returns a hostile 2.5 MB message quickly and truncated', async () => {
+    // Several parts, each under the per-part cap except the last, so every
+    // pattern actually runs on a large input before the cap is exercised.
+    const part = (mimeType: string, text: string) => ({ mimeType, body: { data: b64(text) } });
+    const email = message('m-1', {});
+    email.payload = {
+      ...email.payload,
+      mimeType: 'multipart/mixed',
+      parts: [
+        part('text/plain', `a${' '.repeat(450_000)}b`),
+        part('text/html', '<'.repeat(450_000)),
+        part('text/html', '<li'.repeat(150_000)),
+        part('text/html', '<a href="https://x.example">'.repeat(16_000)),
+        part('text/html', '<p style="'.repeat(45_000)),
+        part('text/html', '<!--'.repeat(150_000)),
+      ],
+    };
     await connect(fakeGmail({ 'm-1': email }).client);
     const started = Date.now();
     const { text, isError } = await call('get_email', { message_id: 'm-1' });

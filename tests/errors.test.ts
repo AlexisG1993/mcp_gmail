@@ -139,3 +139,23 @@ describe('withRetry', () => {
     expect(delays).toEqual([3000, 8000]);
   });
 });
+
+describe('timeouts', () => {
+  const timeout = () => Object.assign(new Error('The operation was aborted due to timeout'), { code: 'TimeoutError' });
+
+  it('retries a timed-out read', async () => {
+    const request = vi.fn().mockRejectedValueOnce(timeout()).mockResolvedValue('ok');
+    await expect(withRetry('read', request, { sleep: noSleep })).resolves.toBe('ok');
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a timed-out write, which may already have succeeded', async () => {
+    const request = vi.fn().mockRejectedValue(timeout());
+    await expect(withRetry('drafts.create', request, { sleep: noSleep, retryServerErrors: false })).rejects.toThrow();
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('explains a timeout', () => {
+    expect(describeGmailError(timeout())).toBe('Gmail did not respond in time. Try again shortly.');
+  });
+});
