@@ -7,14 +7,24 @@
  * rendered by the server's own parser and formatter, so the model sees exactly
  * what get_email would return. No Gmail account is needed.
  *
- * Results are printed and saved to examples/eval/results/<model>.md.
+ * `--set dev` (default) uses the development set, which the prompt may be
+ * tuned on. `--set test` uses the held-out set, which must not be.
+ *
+ * Results are printed and saved to examples/eval/results/<model>.<set>.md,
+ * with a fingerprint of the system prompt so a score can be tied to a prompt.
  */
+import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { gmail_v1 } from 'googleapis';
 import { formatEmail, parseMessage } from '../../src/gmail/parse.js';
-import { type Classification, PRIORITIES, TYPES, makeClassifier, mapLimit, PROJECT_ROOT, selectModel } from '../lib/triage.js';
+import { type Classification, PRIORITIES, SYSTEM_PROMPT, TYPES, makeClassifier, mapLimit, PROJECT_ROOT, selectModel } from '../lib/triage.js';
 import { DATASET, type EvalEmail } from './dataset.js';
+import { TESTSET } from './testset.js';
+
+const SETS: Record<string, EvalEmail[]> = { dev: DATASET, test: TESTSET };
+const SET_NAME = process.argv.includes('--set') ? (process.argv[process.argv.indexOf('--set') + 1] ?? '') : 'dev';
+const PROMPT_ID = createHash('sha256').update(SYSTEM_PROMPT).digest('hex').slice(0, 8);
 
 const CONCURRENCY = Number(process.env.EVAL_CONCURRENCY) || 3;
 
@@ -63,11 +73,13 @@ interface Outcome {
 }
 
 async function main(): Promise<void> {
+  const emails = SETS[SET_NAME];
+  if (!emails) throw new Error(`Unknown --set "${SET_NAME}". Use dev or test.`);
   const { provider, model } = selectModel();
   const classify = makeClassifier(provider, model);
-  console.log(`Evaluating ${model} (${provider}) on ${DATASET.length} labeled emails...\n`);
+  console.log(`Evaluating ${model} (${provider}) on the ${SET_NAME} set: ${emails.length} emails, prompt ${PROMPT_ID}...\n`);
 
-  const outcomes = await mapLimit(DATASET, CONCURRENCY, async (email): Promise<Outcome> => {
+  const outcomes = await mapLimit(emails, CONCURRENCY, async (email): Promise<Outcome> => {
     const rendered = formatEmail(parseMessage(toGmailMessage(email)));
     const r = await classify(rendered);
     process.stderr.write('.');
@@ -86,10 +98,19 @@ async function main(): Promise<void> {
   console.log(report);
   const dir = path.join(PROJECT_ROOT, 'examples', 'eval', 'results');
   mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `${model}.md`);
+  const file = path.join(dir, `${model}.${SET_NAME}.md`);
   writeFileSync(file, report);
   console.log(`Saved to ${path.relative(PROJECT_ROOT, file)}`);
 }
+
+const SIGNALS: [string, (e: EvalEmail) => boolean][] = [
+  ['Failed or soft-failed authentication', (e) => (e.auth ?? 'pass') !== 'pass'],
+  ['HTML body', (e) => e.html !== undefined],
+  ['Contains a link', (e) => /https?:\/\//.test(`${e.plain ?? ''} ${e.html ?? ''}`)],
+  ['Reply-To set', (e) => e.replyTo !== undefined],
+  ['Hidden HTML text', (e) => /display:\s*none|color:\s*#fff/i.test(e.html ?? '')],
+  ['Mentions an AI, assistant or bot', (e) => /\b(AI|assistant|ChatGPT|bot)\b/i.test(`${e.plain ?? ''} ${e.html ?? ''}`)],
+];
 
 function pct(n: number, d: number): string {
   return d === 0 ? 'n/a' : `${((100 * n) / d).toFixed(1)}% (${n}/${d})`;
@@ -117,9 +138,10 @@ function buildReport(provider: string, model: string, outcomes: Outcome[]): stri
   const cost = price ? (inputTokens * price.input + outputTokens * price.output) / 1e6 : undefined;
 
   const lines = [
-    `# Triage eval: ${model}`,
+    `# Triage eval: ${model}, ${SET_NAME} set`,
     '',
-    `Provider \`${provider}\`, ${n} labeled emails (examples/eval/dataset.ts), run ${new Date().toISOString().slice(0, 10)}.`,
+    `Provider \`${provider}\`, ${n} labeled emails (examples/eval/${SET_NAME === 'test' ? 'testset' : 'dataset'}.ts), ` +
+      `system prompt \`${PROMPT_ID}\`, run ${new Date().toISOString().slice(0, 10)}.`,
     '',
     '| Metric | Result |',
     '|---|---|',
@@ -134,6 +156,18 @@ function buildReport(provider: string, model: string, outcomes: Outcome[]): stri
     `| Tokens (input / output, total) | ${inputTokens.toLocaleString('en-US')} / ${outputTokens.toLocaleString('en-US')} |`,
     `| Latency per email (p50 / p95) | ${(p50 / 1000).toFixed(2)} s / ${(p95 / 1000).toFixed(2)} s |`,
     ...(cost !== undefined ? [`| Cost for the run | $${cost.toFixed(4)} ($${((cost / n) * 1000).toFixed(2)} per 1,000 emails) |`] : []),
+    '',
+    '## Warning signs by true label',
+    '',
+    'How often each signal appears on legitimate and on suspicious email in this set. A signal that appeared only on suspicious email would let a model score well by keying on it.',
+    '',
+    '| Signal | Legitimate | Suspicious |',
+    '|---|---:|---:|',
+    ...SIGNALS.map(([label, test]) => {
+      const legit = outcomes.filter((o) => o.email.expected.type !== 'suspicious' && test(o.email)).length;
+      const susp = outcomes.filter((o) => o.email.expected.type === 'suspicious' && test(o.email)).length;
+      return `| ${label} | ${legit} of ${n - suspicious.length} | ${susp} of ${suspicious.length} |`;
+    }),
     '',
     '## Type confusion matrix',
     '',
