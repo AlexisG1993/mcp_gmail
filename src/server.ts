@@ -16,7 +16,7 @@ import {
 import { log } from './log.js';
 
 const SERVER_NAME = 'gmail-mcp-server';
-const SERVER_VERSION = '0.1.0';
+const SERVER_VERSION = '0.2.0';
 
 // Gmail message and thread ids are short hex strings. Rejecting anything else
 // up front gives the model a clear validation error instead of a Gmail 400.
