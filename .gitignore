@@ -13,3 +13,6 @@ dist/
 coverage/
 *.log
 .DS_Store
+
+# Local state of the triage agent example
+.triage-agent-ledger.json

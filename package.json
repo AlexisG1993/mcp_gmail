@@ -35,7 +35,8 @@
     "test": "vitest run",
     "demo": "npm run build && tsx examples/triage-demo.ts",
     "eval": "tsx examples/eval/run-eval.ts",
-    "agent": "npm run build && tsx examples/triage-agent.ts"
+    "agent": "npm run build && tsx examples/triage-agent.ts",
+    "eval:agent": "tsx examples/eval/agent-eval.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.4.0",
