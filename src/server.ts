@@ -5,6 +5,7 @@ import { asAuthError, getGmail, withRetry } from './gmail/client.js';
 import { REPLY_HEADERS, ReplyError, buildReply, originalFromMessage } from './gmail/draft.js';
 import { describeGmailError } from './gmail/errors.js';
 import {
+  fitThreadBudget,
   formatEmail,
   formatSummaries,
   formatThread,
@@ -53,6 +54,24 @@ export const createDraftReplyInput = z.object({
     .describe('Plain-text body of the reply. It is saved as a draft and never sent.'),
 });
 
+// Structured search results, so agent code can use ids without parsing display text.
+export const searchEmailsOutput = z.object({
+  query: z.string(),
+  messages: z.array(
+    z.object({
+      id: z.string(),
+      threadId: z.string(),
+      from: z.string(),
+      to: z.string(),
+      subject: z.string(),
+      date: z.string(),
+      snippet: z.string(),
+      labels: z.array(z.string()),
+    }),
+  ),
+  skipped: z.number().int().describe('Matches that could not be loaded, e.g. deleted after the search ran.'),
+});
+
 type GmailProvider = () => Promise<gmail_v1.Gmail>;
 
 /**
@@ -69,6 +88,7 @@ export function createServer(gmail: GmailProvider = () => getGmail()): McpServer
       description:
         'Search the mailbox with Gmail search syntax. Returns id, threadId, from, to, subject, date, snippet and labels for each match, newest first.',
       inputSchema: searchEmailsInput,
+      outputSchema: searchEmailsOutput,
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     ({ query, max_results }) =>
@@ -78,7 +98,9 @@ export function createServer(gmail: GmailProvider = () => getGmail()): McpServer
           client.users.messages.list({ userId: 'me', q: query, maxResults: max_results }),
         );
         const ids = (list.data.messages ?? []).flatMap((m) => (m.id ? [m.id] : []));
-        const messages = await Promise.all(
+        // One message failing to load (for example, deleted since the list call)
+        // should not hide the others, so failures are counted instead of thrown.
+        const settled = await Promise.allSettled(
           ids.map(async (id) => {
             const res = await withRetry('messages.get', () =>
               client.users.messages.get({
@@ -91,7 +113,19 @@ export function createServer(gmail: GmailProvider = () => getGmail()): McpServer
             return res.data;
           }),
         );
-        return formatSummaries(messages.map(summarizeMessage), query);
+        const summaries = settled.flatMap((r) => (r.status === 'fulfilled' ? [summarizeMessage(r.value)] : []));
+        const failure = settled.find((r) => r.status === 'rejected');
+        if (failure && summaries.length === 0) throw failure.reason;
+
+        const skipped = ids.length - summaries.length;
+        return {
+          text: formatSummaries(summaries, query, skipped),
+          structured: {
+            query,
+            messages: summaries.map(({ labelIds, ...s }) => ({ ...s, labels: labelIds })),
+            skipped,
+          },
+        };
       }),
   );
 
@@ -118,7 +152,9 @@ export function createServer(gmail: GmailProvider = () => getGmail()): McpServer
     'get_thread',
     {
       title: 'Read a thread',
-      description: 'Read every message in a thread, oldest first, each in the same format as get_email.',
+      description:
+        'Read every message in a thread, oldest first, each in the same format as get_email. ' +
+        'Very long threads are shortened from the oldest message; get_email reads any message in full.',
       inputSchema: getThreadInput,
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
@@ -128,7 +164,7 @@ export function createServer(gmail: GmailProvider = () => getGmail()): McpServer
         const res = await withRetry('threads.get', () =>
           client.users.threads.get({ userId: 'me', id: thread_id, format: 'full' }),
         );
-        const emails = sortOldestFirst(res.data.messages ?? []).map(parseMessage);
+        const emails = fitThreadBudget(sortOldestFirst(res.data.messages ?? []).map(parseMessage));
         return formatThread(thread_id, emails);
       }),
   );
@@ -193,14 +229,20 @@ export function createServer(gmail: GmailProvider = () => getGmail()): McpServer
 /**
  * Runs a tool body and turns any failure into a tool error result
  * (`isError: true`) the model can read, instead of a protocol error or a crash.
- * Each call is logged to stderr with its outcome and duration, never its content.
+ * A body may return plain text, or text plus structured content for tools with
+ * an output schema. Each call is logged to stderr with its outcome, duration
+ * and, on failure, the error message the model sees; never queries or content.
  */
-export async function runTool(name: string, body: () => Promise<string>) {
+export async function runTool(
+  name: string,
+  body: () => Promise<string | { text: string; structured: Record<string, unknown> }>,
+) {
   const started = Date.now();
   try {
-    const text = await body();
+    const result = await body();
     log('info', `${name} ok in ${Date.now() - started} ms`);
-    return { content: [{ type: 'text' as const, text }] };
+    if (typeof result === 'string') return { content: [{ type: 'text' as const, text: result }] };
+    return { content: [{ type: 'text' as const, text: result.text }], structuredContent: result.structured };
   } catch (err) {
     const text = err instanceof ReplyError ? err.message : (asAuthError(err)?.message ?? describeGmailError(err));
     log('error', `${name} failed in ${Date.now() - started} ms: ${text}`);

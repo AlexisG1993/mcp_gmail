@@ -140,6 +140,12 @@ describe('parseMessage', () => {
     );
   });
 
+  it('strips a hostile run of spaces in linear time', () => {
+    const started = Date.now();
+    parseMessage(plainMessage(`a${' '.repeat(400_000)}b`));
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
   it('handles a message with no payload', () => {
     const email = parseMessage({ id: 'm-empty', threadId: 't-empty' });
     expect(email.body).toBe('');
@@ -166,6 +172,30 @@ describe('truncation', () => {
 describe('htmlToText and decodeEntities', () => {
   it('separates table cells with spaces and rows with line breaks', () => {
     expect(htmlToText('<table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>')).toBe('A B\nC D');
+  });
+
+  it('keeps link targets, but not when the text already is the target', () => {
+    expect(htmlToText('<a href="https://pay.example/x"><b>Pay now</b></a>')).toBe('Pay now (https://pay.example/x)');
+    expect(htmlToText("<a href='mailto:a@b.example'>a@b.example</a>")).toBe('a@b.example');
+    expect(htmlToText('<a href="https://x.example">https://x.example</a>')).toBe('https://x.example');
+    expect(htmlToText('<a href="javascript:alert(1)">Click</a>')).toBe('Click');
+  });
+
+  it('drops unterminated comments and scripts to the end, like a browser', () => {
+    expect(htmlToText('Visible<!-- never closed <p>hidden')).toBe('Visible');
+    expect(htmlToText('Visible<script>never closed')).toBe('Visible');
+  });
+
+  it.each([
+    ['unclosed <', '<'.repeat(400_000)],
+    ['unclosed <li', '<li'.repeat(150_000)],
+    ['unclosed comments', '<!--'.repeat(100_000)],
+    ['unclosed <style', '<style'.repeat(70_000)],
+    ['open links', '<a href="https://x">'.repeat(20_000)],
+  ])('converts hostile HTML (%s) in linear time', (_label, html) => {
+    const started = Date.now();
+    htmlToText(html);
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 
   it('leaves unknown or invalid entities untouched', () => {

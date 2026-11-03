@@ -13,6 +13,15 @@ type Header = gmail_v1.Schema$MessagePartHeader;
 /** Bodies longer than this are cut, and the output says so. */
 export const MAX_BODY_CHARS = 20_000;
 
+/**
+ * Each decoded text part is cut to this length before any conversion runs, so a
+ * huge or hostile message costs bounded time no matter what it contains.
+ */
+export const MAX_SOURCE_CHARS = 500_000;
+
+/** Total body characters a thread may return; the newest messages get the budget first. */
+export const MAX_THREAD_CHARS = 60_000;
+
 export interface Attachment {
   filename: string;
   mimeType: string;
@@ -25,6 +34,9 @@ export interface ParsedEmail {
   from: string;
   to: string;
   cc: string;
+  replyTo: string;
+  /** SPF, DKIM and DMARC verdicts from Gmail's Authentication-Results header, e.g. "spf=pass dkim=pass dmarc=pass". */
+  authentication: string;
   subject: string;
   date: string;
   messageId: string;
@@ -33,6 +45,8 @@ export interface ParsedEmail {
   bodyLength: number;
   truncated: boolean;
   attachments: Attachment[];
+  /** Warnings about how the body was produced, e.g. hidden HTML text. */
+  notes: string[];
 }
 
 export interface EmailSummary {
@@ -85,6 +99,13 @@ interface Collected {
   plain: string[];
   html: string[];
   attachments: Attachment[];
+  capped: boolean;
+}
+
+function capSource(text: string, out: Collected): string {
+  if (text.length <= MAX_SOURCE_CHARS) return text;
+  out.capped = true;
+  return text.slice(0, MAX_SOURCE_CHARS);
 }
 
 /**
@@ -115,8 +136,8 @@ function walk(part: MessagePart, out: Collected): void {
   const data = part.body?.data;
   if (!data) return;
   const contentType = getHeader(part.headers, 'Content-Type') || mimeType;
-  if (mimeType === 'text/plain') out.plain.push(decodeText(decodeBase64Url(data), contentType));
-  else if (mimeType === 'text/html') out.html.push(decodeText(decodeBase64Url(data), contentType));
+  if (mimeType === 'text/plain') out.plain.push(capSource(decodeText(decodeBase64Url(data), contentType), out));
+  else if (mimeType === 'text/html') out.html.push(capSource(decodeText(decodeBase64Url(data), contentType), out));
 }
 
 const NAMED_ENTITIES: Record<string, string> = {
@@ -150,24 +171,67 @@ export function decodeEntities(text: string): string {
   });
 }
 
+const LINK_TAG = /<a\b([^<>]*)>|<\/a\s*>/gi;
+const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>]+))/i;
+
+/**
+ * Writes each link's target after its text, as in "Pay now (https://…)", so the
+ * model can see where a link really goes. Single pass, linear in the input.
+ */
+function inlineLinks(html: string): string {
+  let out = '';
+  let last = 0;
+  let open: { href: string; start: number } | undefined;
+  for (const m of html.matchAll(LINK_TAG)) {
+    out += html.slice(last, m.index);
+    last = m.index + m[0].length;
+    if (m[1] !== undefined) {
+      const h = HREF.exec(m[1]);
+      const href = (h?.[1] ?? h?.[2] ?? h?.[3] ?? '').trim();
+      open = /^(https?:|mailto:)/i.test(href) ? { href: href.replace(/^mailto:/i, ''), start: out.length } : undefined;
+    } else if (open) {
+      const text = out.slice(open.start).replace(/<[^<>]*>/g, '').trim();
+      if (text !== open.href) out += ` (${open.href})`;
+      open = undefined;
+    }
+  }
+  return out + html.slice(last);
+}
+
+// Inline styles that hide text from a human reader while it stays in the markup.
+const HIDDEN_STYLE =
+  /style\s*=\s*["'][^"'<>]*(display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?![.\d]*[1-9])|opacity\s*:\s*0(?![.\d]*[1-9]))/i;
+
+/** True when the HTML has inline-styled hidden elements, a common way to show a model text a person never sees. */
+export function hasHiddenHtml(html: string): boolean {
+  return HIDDEN_STYLE.test(html);
+}
+
 /**
  * A deliberately light HTML-to-text conversion: drops non-content elements,
- * turns block boundaries into line breaks, strips the remaining tags and
- * decodes entities. Good enough for an LLM to read; not a renderer.
+ * turns block boundaries into line breaks, keeps link targets, strips the
+ * remaining tags and decodes entities. Good enough for an LLM to read; not a
+ * renderer.
+ *
+ * Every pattern runs in linear time: none can scan past the next "<", and the
+ * unterminated cases match to the end instead of rescanning. Hostile input such
+ * as thousands of unclosed "<" therefore cannot stall the server.
  */
 export function htmlToText(html: string): string {
   return decodeEntities(
-    html
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/<(head|style|script|title)\b[\s\S]*?<\/\1\s*>/gi, '')
+    inlineLinks(
+      html
+        .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+        .replace(/<(head|style|script|title)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, ''),
+    )
       .replace(/<br\s*\/?>/gi, '\n')
       // List items and table rows start a line; their closing tags add nothing,
       // so consecutive items do not get blank lines between them.
-      .replace(/<li\b[^>]*>/gi, '\n- ')
+      .replace(/<li\b[^<>]*>/gi, '\n- ')
       .replace(/<\/(p|div|ul|ol|table|blockquote|h[1-6])\s*>/gi, '\n')
-      .replace(/<(p|div|tr|table|blockquote|h[1-6])\b[^>]*>/gi, '\n')
+      .replace(/<(p|div|tr|table|blockquote|h[1-6])\b[^<>]*>/gi, '\n')
       .replace(/<\/t[dh]\s*>/gi, '\t')
-      .replace(/<[^>]+>/g, ''),
+      .replace(/<[^<>]*>/g, ''),
   )
     .replace(/[ \t ]+/g, ' ')
     .replace(/ *\n */g, '\n')
@@ -175,19 +239,54 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
-/** Extracts the readable body (plain text preferred, HTML as fallback) and attachment metadata. */
-export function extractBody(payload: MessagePart | null | undefined): { text: string; attachments: Attachment[] } {
-  const out: Collected = { plain: [], html: [], attachments: [] };
+/**
+ * Extracts the readable body and attachment metadata.
+ *
+ * Plain text is preferred because it is what the sender wrote for text readers.
+ * When the plain part is only a stub of the HTML (a "view in browser" line, or
+ * a footer next to an HTML-only body), the HTML version is used instead, since
+ * that is what a person sees in Gmail. Notes record anything the reader should
+ * know about how the body was produced.
+ */
+export function extractBody(payload: MessagePart | null | undefined): {
+  text: string;
+  attachments: Attachment[];
+  notes: string[];
+} {
+  const out: Collected = { plain: [], html: [], attachments: [], capped: false };
   if (payload) walk(payload, out);
-  const text =
-    out.plain.length > 0
-      ? out.plain
-          .join('\n\n')
-          .replace(/\r\n/g, '\n')
-          .replace(/[ \t]+$/gm, '') // trailing spaces, e.g. from format=flowed line wrapping
-          .trim()
-      : out.html.map(htmlToText).join('\n\n');
-  return { text, attachments: out.attachments };
+  const notes: string[] = [];
+
+  const plain = out.plain
+    .join('\n\n')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd()) // trailing spaces, e.g. from format=flowed line wrapping
+    .join('\n')
+    .trim();
+  const html = out.html.map(htmlToText).join('\n\n');
+
+  let text = plain || html;
+  if (plain && html.length > 2 * plain.length) {
+    text = html;
+    notes.push('The plain-text part is much shorter than the HTML part, so the HTML version is shown.');
+  }
+  if (out.html.some(hasHiddenHtml)) {
+    notes.push('The HTML contains hidden elements; their text is included here, but a person reading in Gmail may not see it.');
+  }
+  if (out.capped) notes.push(`Part of the message exceeded ${MAX_SOURCE_CHARS} characters and was cut before conversion.`);
+  return { text, attachments: out.attachments, notes };
+}
+
+/** Compact SPF/DKIM/DMARC verdicts, e.g. "spf=pass dkim=pass dmarc=fail". Empty when Gmail added no results. */
+export function authenticationSummary(headers: Header[] | null | undefined): string {
+  const results = getHeader(headers, 'Authentication-Results').slice(0, 5_000);
+  const verdicts = new Map<string, string>();
+  for (const m of results.matchAll(/\b(spf|dkim|dmarc)=([a-z]+)/gi)) {
+    const method = (m[1] as string).toLowerCase();
+    if (!verdicts.has(method)) verdicts.set(method, (m[2] as string).toLowerCase());
+  }
+  return [...verdicts].map(([method, verdict]) => `${method}=${verdict}`).join(' ');
 }
 
 export function truncate(text: string, max = MAX_BODY_CHARS): { text: string; truncated: boolean } {
@@ -197,7 +296,7 @@ export function truncate(text: string, max = MAX_BODY_CHARS): { text: string; tr
 /** Parses a message fetched with `format: 'full'`. */
 export function parseMessage(message: Message): ParsedEmail {
   const headers = message.payload?.headers;
-  const { text, attachments } = extractBody(message.payload);
+  const { text, attachments, notes } = extractBody(message.payload);
   const body = truncate(text);
   return {
     id: message.id ?? '',
@@ -205,6 +304,8 @@ export function parseMessage(message: Message): ParsedEmail {
     from: getHeader(headers, 'From'),
     to: getHeader(headers, 'To'),
     cc: getHeader(headers, 'Cc'),
+    replyTo: getHeader(headers, 'Reply-To'),
+    authentication: authenticationSummary(headers),
     subject: getHeader(headers, 'Subject'),
     date: getHeader(headers, 'Date'),
     messageId: getHeader(headers, 'Message-ID'),
@@ -212,6 +313,7 @@ export function parseMessage(message: Message): ParsedEmail {
     bodyLength: text.length,
     truncated: body.truncated,
     attachments,
+    notes,
   };
 }
 
@@ -249,7 +351,10 @@ export function formatEmail(email: ParsedEmail): string {
     `To: ${email.to}`,
   ];
   if (email.cc) lines.push(`Cc: ${email.cc}`);
+  // Replies go to Reply-To when it is set, so a mismatch with From is worth seeing before drafting.
+  if (email.replyTo) lines.push(`Reply-To: ${email.replyTo}`);
   lines.push(`Subject: ${email.subject}`, `Date: ${email.date}`, `Message-ID header: ${email.messageId}`);
+  lines.push(`Sender authentication: ${email.authentication || 'no results'}`);
 
   if (email.attachments.length > 0) {
     lines.push('Attachments (metadata only):');
@@ -258,6 +363,12 @@ export function formatEmail(email: ParsedEmail): string {
     lines.push('Attachments: none');
   }
 
+  for (const note of email.notes) lines.push(`Note: ${note}`);
+
+  if (email.truncated && email.body.length === 0) {
+    lines.push('', `[Body omitted to keep the thread within its size limit. Read it with get_email: ${email.id}]`);
+    return lines.join('\n');
+  }
   lines.push('', email.body || '(no readable body)');
   if (email.truncated) {
     lines.push('', `[Body truncated: showing the first ${email.body.length} of ${email.bodyLength} characters.]`);
@@ -265,8 +376,9 @@ export function formatEmail(email: ParsedEmail): string {
   return lines.join('\n');
 }
 
-export function formatSummaries(summaries: EmailSummary[], query: string): string {
+export function formatSummaries(summaries: EmailSummary[], query: string, skipped = 0): string {
   if (summaries.length === 0) return `No messages match "${query}".`;
+  const skippedNote = skipped > 0 ? `\n\n${skipped} more match(es) could not be loaded and were skipped.` : '';
   const blocks = summaries.map((s, i) =>
     [
       `${i + 1}. ${s.subject || '(no subject)'}`,
@@ -279,7 +391,24 @@ export function formatSummaries(summaries: EmailSummary[], query: string): strin
       `   snippet: ${s.snippet}`,
     ].join('\n'),
   );
-  return [`${summaries.length} message(s) matching "${query}":`, '', blocks.join('\n\n')].join('\n');
+  return [`${summaries.length} message(s) matching "${query}":`, '', blocks.join('\n\n')].join('\n') + skippedNote;
+}
+
+/**
+ * Caps a thread's total body size. Newest messages are kept first, since they
+ * carry the latest state of the conversation; older ones are shortened, then
+ * omitted with a pointer to get_email.
+ */
+export function fitThreadBudget(emails: ParsedEmail[], budget = MAX_THREAD_CHARS): ParsedEmail[] {
+  let remaining = budget;
+  const fitted = [...emails];
+  for (let i = fitted.length - 1; i >= 0; i--) {
+    const email = fitted[i] as ParsedEmail;
+    const body = email.body.length > remaining ? email.body.slice(0, remaining) : email.body;
+    if (body !== email.body) fitted[i] = { ...email, body, truncated: true };
+    remaining -= body.length;
+  }
+  return fitted;
 }
 
 export function formatThread(threadId: string, emails: ParsedEmail[]): string {

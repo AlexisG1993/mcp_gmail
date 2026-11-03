@@ -18,6 +18,8 @@ In scope:
 - **Token exposure.** Leakage of `token.json`, `credentials.json` or OAuth tokens through logs, tool output or error messages.
 - **Header injection.** Any way to inject headers or recipients into a draft reply through crafted message content.
 - **Input validation bypasses** that reach the Gmail API with unvalidated input.
+- **Denial of service through message content.** Any email body that makes parsing take disproportionate time or memory.
+- **Agent scope bypasses.** Any way for the triage agent example to reach a thread, message or tool outside the one email it was given.
 
 Out of scope:
 

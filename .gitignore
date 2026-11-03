@@ -1,6 +1,7 @@
 # Secrets: never commit
 credentials.json
 token.json
+token.json.*.tmp
 .env
 .env.*
 
