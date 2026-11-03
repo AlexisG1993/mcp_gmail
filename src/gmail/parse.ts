@@ -206,8 +206,11 @@ function inlineLinks(html: string): string {
 }
 
 const ANY_TAG = tag(`${ATTRS}>`, 'g');
+const OPEN_TAG = tag(`([a-z][a-z0-9]*)\\b(${ATTRS})>`);
 const STYLE_ATTR = /\bstyle\s*=\s*(?:"([^"<>]*)"|'([^'<>]*)')/gi;
-const HIDDEN_ATTR = tag(`[a-z][a-z0-9]*\\b[^<>]*?\\shidden(?=[\\s/>=])`, 'i');
+const HIDDEN_ATTR = /(?:^|\s)hidden(?=[\s/=]|$)/i;
+const VOID_ELEMENTS = new Set(['br', 'img', 'input', 'meta', 'link', 'hr', 'wbr', 'source', 'area', 'col']);
+const MAX_HIDDEN_MARKS = 200;
 
 // Declarations that hide text from a human reader while it stays in the markup.
 const HIDING_DECLARATION =
@@ -219,13 +222,13 @@ function cssValue(style: string, property: string): string | undefined {
 }
 
 /**
- * True when the HTML contains text styled so a person cannot see it: display
- * or visibility off, zero size or opacity, the `hidden` attribute, or text in
- * the same colour as its own background. Only inline styles are checked.
+ * True when a tag's attributes hide its content from a person: the `hidden`
+ * attribute, display or visibility off, zero size or opacity, or text in the
+ * same colour as its own background. Only inline styles are checked.
  */
-export function hasHiddenHtml(html: string): boolean {
-  if (HIDDEN_ATTR.test(html)) return true;
-  for (const m of html.matchAll(STYLE_ATTR)) {
+function hidesContent(attrs: string): boolean {
+  if (HIDDEN_ATTR.test(attrs)) return true;
+  for (const m of attrs.matchAll(STYLE_ATTR)) {
     const style = m[1] ?? m[2] ?? '';
     if (HIDING_DECLARATION.test(style)) return true;
     const color = cssValue(style, 'color');
@@ -235,11 +238,50 @@ export function hasHiddenHtml(html: string): boolean {
   return false;
 }
 
+/** True when the HTML contains an element whose text a person cannot see. */
+export function hasHiddenHtml(html: string): boolean {
+  for (const m of html.matchAll(OPEN_TAG)) {
+    if (!VOID_ELEMENTS.has((m[1] as string).toLowerCase()) && hidesContent(m[2] as string)) return true;
+  }
+  return false;
+}
+
+/**
+ * Wraps the content of hidden elements in "[hidden text: …]", so the model can
+ * tell which words a person reading the email would never see. The element is
+ * taken to end at the next closing tag of the same name, which is right for the
+ * usual single-element case. At most MAX_HIDDEN_MARKS elements are marked, and
+ * a tag name with no closing tag is not searched again, so the cost stays linear.
+ */
+function markHidden(html: string): string {
+  const lower = html.toLowerCase();
+  const unclosed = new Set<string>();
+  let out = '';
+  let last = 0;
+  let marks = 0;
+  for (const m of html.matchAll(OPEN_TAG)) {
+    if (marks >= MAX_HIDDEN_MARKS) break;
+    if (m.index < last) continue; // inside an element already marked
+    const name = (m[1] as string).toLowerCase();
+    if (VOID_ELEMENTS.has(name) || unclosed.has(name) || !hidesContent(m[2] as string)) continue;
+    const contentStart = m.index + m[0].length;
+    const end = lower.indexOf(`</${name}`, contentStart);
+    if (end < 0) {
+      unclosed.add(name);
+      continue;
+    }
+    out += `${html.slice(last, contentStart)} [hidden text: ${html.slice(contentStart, end)}] `;
+    last = end;
+    marks++;
+  }
+  return out + html.slice(last);
+}
+
 /**
  * A deliberately light HTML-to-text conversion: drops non-content elements,
- * turns block boundaries into line breaks, keeps link targets, strips the
- * remaining tags and decodes entities. Good enough for an LLM to read; not a
- * renderer.
+ * turns block boundaries into line breaks, marks hidden text, keeps link
+ * targets, strips the remaining tags and decodes entities. Good enough for an
+ * LLM to read; not a renderer.
  *
  * Every pattern runs in linear time: none can scan past the next "<", and the
  * unterminated cases match to the end instead of rescanning. Hostile input such
@@ -248,9 +290,11 @@ export function hasHiddenHtml(html: string): boolean {
 export function htmlToText(html: string): string {
   return decodeEntities(
     inlineLinks(
-      html
-        .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
-        .replace(/<(head|style|script|title)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, ''),
+      markHidden(
+        html
+          .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+          .replace(/<(head|style|script|title)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, ''),
+      ),
     )
       .replace(/<br\s*\/?>/gi, '\n')
       // List items and table rows start a line; their closing tags add nothing,
