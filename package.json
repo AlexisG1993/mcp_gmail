@@ -33,7 +33,9 @@
     "auth": "npm run build && node dist/auth.js",
     "typecheck": "tsc --noEmit && tsc -p tests && tsc -p examples",
     "test": "vitest run",
-    "demo": "npm run build && tsx examples/triage-demo.ts"
+    "demo": "npm run build && tsx examples/triage-demo.ts",
+    "eval": "tsx examples/eval/run-eval.ts",
+    "agent": "npm run build && tsx examples/triage-agent.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.4.0",
