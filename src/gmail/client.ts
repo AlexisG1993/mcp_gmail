@@ -6,7 +6,7 @@ import { GMAIL_SCOPES, loadConfig, type Config } from '../config.js';
 import { log } from '../log.js';
 import { errorInfo, isRateLimit, isServerError } from './errors.js';
 
-const RUN_AUTH = 'Run `npm run auth` in the gmail-mcp-server folder to sign in.';
+const RUN_AUTH = 'Run `npm run auth` in the project folder to sign in.';
 
 /** Missing, unreadable or insufficient credentials. The message is safe to show to the user. */
 export class AuthError extends Error {

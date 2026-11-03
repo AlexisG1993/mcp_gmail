@@ -2,6 +2,7 @@
 
 Least-privilege Gmail access for AI agents over the Model Context Protocol: search, read and draft replies. It never sends.
 
+[![CI](https://github.com/AlexisG1993/mcp_gmail/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexisG1993/mcp_gmail/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22.12-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
@@ -389,4 +390,4 @@ The tests run without network access, using small JSON fixtures shaped like real
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Release notes are in [CHANGELOG.md](CHANGELOG.md), and security reports are handled as described in [SECURITY.md](SECURITY.md).
