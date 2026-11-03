@@ -1,0 +1,34 @@
+{
+  "name": "gmail-mcp-server",
+  "version": "0.1.0",
+  "description": "Least-privilege MCP server for Gmail: search, read, and draft replies. Never sends.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "auth": "npm run build && node dist/auth.js",
+    "typecheck": "tsc --noEmit && tsc -p tests && tsc -p examples",
+    "test": "vitest run",
+    "demo": "npm run build && tsx examples/triage-demo.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
+    "google-auth-library": "^11.3.2",
+    "googleapis": "^189.0.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

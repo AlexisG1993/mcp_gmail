@@ -1,0 +1,100 @@
+{
+  "id": "t-100",
+  "historyId": "9001",
+  "messages": [
+    {
+      "id": "m-2",
+      "threadId": "t-100",
+      "labelIds": [
+        "INBOX",
+        "UNREAD"
+      ],
+      "snippet": "Hi there",
+      "sizeEstimate": 4096,
+      "historyId": "9001",
+      "internalDate": "1793614500000",
+      "payload": {
+        "partId": "",
+        "mimeType": "text/plain",
+        "filename": "",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "text/plain; charset=\"UTF-8\""
+          },
+          {
+            "name": "From",
+            "value": "Alice Example <alice@example.com>"
+          },
+          {
+            "name": "To",
+            "value": "me@example.com"
+          },
+          {
+            "name": "Subject",
+            "value": "Re: Quarterly invoice"
+          },
+          {
+            "name": "Date",
+            "value": "Mon, 2 Nov 2026 09:15:00 +0000"
+          },
+          {
+            "name": "Message-ID",
+            "value": "<CAF5678@mail.example.com>"
+          }
+        ],
+        "body": {
+          "size": 23,
+          "data": "U2Vjb25kIG1lc3NhZ2UgKHJlcGx5KS4"
+        }
+      }
+    },
+    {
+      "id": "m-1",
+      "threadId": "t-100",
+      "labelIds": [
+        "INBOX",
+        "UNREAD"
+      ],
+      "snippet": "Hi there",
+      "sizeEstimate": 4096,
+      "historyId": "9001",
+      "internalDate": "1793610900000",
+      "payload": {
+        "partId": "",
+        "mimeType": "text/plain",
+        "filename": "",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "text/plain; charset=\"UTF-8\""
+          },
+          {
+            "name": "From",
+            "value": "Alice Example <alice@example.com>"
+          },
+          {
+            "name": "To",
+            "value": "me@example.com"
+          },
+          {
+            "name": "Subject",
+            "value": "Quarterly invoice"
+          },
+          {
+            "name": "Date",
+            "value": "Mon, 2 Nov 2026 09:15:00 +0000"
+          },
+          {
+            "name": "Message-ID",
+            "value": "<CAF1234@mail.example.com>"
+          }
+        ],
+        "body": {
+          "size": 14,
+          "data": "Rmlyc3QgbWVzc2FnZS4"
+        }
+      }
+    }
+  ]
+}

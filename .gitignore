@@ -1,0 +1,14 @@
+# Secrets: never commit
+credentials.json
+token.json
+.env
+.env.*
+
+# Build and dependencies
+node_modules/
+dist/
+
+# Tooling
+coverage/
+*.log
+.DS_Store

@@ -1,0 +1,47 @@
+{
+  "id": "m-html",
+  "threadId": "t-100",
+  "labelIds": [
+    "INBOX",
+    "UNREAD"
+  ],
+  "snippet": "Hi there",
+  "sizeEstimate": 4096,
+  "historyId": "9001",
+  "internalDate": "1793610900000",
+  "payload": {
+    "partId": "",
+    "mimeType": "text/html",
+    "filename": "",
+    "headers": [
+      {
+        "name": "From",
+        "value": "Alice Example <alice@example.com>"
+      },
+      {
+        "name": "To",
+        "value": "me@example.com"
+      },
+      {
+        "name": "Subject",
+        "value": "Quarterly invoice"
+      },
+      {
+        "name": "Date",
+        "value": "Mon, 2 Nov 2026 09:15:00 +0000"
+      },
+      {
+        "name": "Message-ID",
+        "value": "<CAF1234@mail.example.com>"
+      },
+      {
+        "name": "Content-Type",
+        "value": "text/html; charset=\"UTF-8\""
+      }
+    ],
+    "body": {
+      "size": 318,
+      "data": "PGh0bWw-PGhlYWQ-PHRpdGxlPng8L3RpdGxlPjxzdHlsZT5we2NvbG9yOnJlZH08L3N0eWxlPjwvaGVhZD48Ym9keT48IS0tIHRyYWNraW5nIC0tPjxwPkhlbGxvJm5ic3A7Qm9iLDwvcD48cD5Zb3VyIG9yZGVyIDxiPiM0MjwvYj4gaGFzIHNoaXBwZWQgJmFtcDsgaXMgb24gaXRzIHdheS48L3A-PHVsPjxsaT5JdGVtIG9uZTwvbGk-PGxpPkl0ZW0gdHdvPC9saT48L3VsPjxkaXY-UXVlc3Rpb25zPyBSZXBseSYjMzk7cyB3ZWxjb21lLjxicj5MaW5lIHR3byAmI3gyMDE0OyBkb25lPC9kaXY-PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0PjwvYm9keT48L2h0bWw-"
+    }
+  }
+}
