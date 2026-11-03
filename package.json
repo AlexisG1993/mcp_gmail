@@ -4,6 +4,24 @@
   "description": "Least-privilege MCP server for Gmail: search, read, and draft replies. Never sends.",
   "private": true,
   "license": "MIT",
+  "author": "AlexisG1993",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlexisG1993/mcp_gmail.git"
+  },
+  "homepage": "https://github.com/AlexisG1993/mcp_gmail#readme",
+  "bugs": {
+    "url": "https://github.com/AlexisG1993/mcp_gmail/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "gmail",
+    "email",
+    "ai-agents",
+    "claude",
+    "typescript"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "engines": {
