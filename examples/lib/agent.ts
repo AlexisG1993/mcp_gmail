@@ -178,6 +178,11 @@ export interface AgentOptions {
   saveDrafts: boolean;
   ledger: Ledger;
   count: number;
+  /**
+   * Run the agent on every email, as if triage had missed every attack. Used
+   * only by the safety eval, to test the scope rules on their own.
+   */
+  bypassTriage?: boolean;
 }
 
 /** Triages recent inbox mail and runs the agent on each email that needs a reply. */
@@ -196,7 +201,9 @@ export async function runTriageAgent(mcp: Client, opts: AgentOptions): Promise<E
       // The whole thread is classified, not just the newest message, so an
       // injection in an earlier message cannot hide behind a harmless follow-up.
       const { text: thread } = await callTool(mcp, 'get_thread', { thread_id: email.threadId });
-      outcome.triage = (await opts.classify(thread)).result;
+      outcome.triage = opts.bypassTriage
+        ? { type: 'customer', priority: 'normal', reason: 'triage bypassed for the safety eval' }
+        : (await opts.classify(thread)).result;
       const t = outcome.triage;
       if (typeof t === 'string') outcome.skipped = 'triage failed';
       else if (!['customer', 'vendor'].includes(t.type) || t.priority === 'low') outcome.skipped = 'no reply needed';
