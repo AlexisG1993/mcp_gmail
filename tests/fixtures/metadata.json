@@ -1,0 +1,33 @@
+{
+  "id": "m-meta",
+  "threadId": "t-200",
+  "labelIds": [
+    "INBOX",
+    "CATEGORY_UPDATES"
+  ],
+  "snippet": "We&#39;ve received your request &amp; will reply soon",
+  "sizeEstimate": 1234,
+  "historyId": "9100",
+  "internalDate": "1793610900000",
+  "payload": {
+    "mimeType": "multipart/alternative",
+    "headers": [
+      {
+        "name": "From",
+        "value": "Support <support@vendor.example>"
+      },
+      {
+        "name": "To",
+        "value": "me@example.com"
+      },
+      {
+        "name": "Subject",
+        "value": "Ticket #123"
+      },
+      {
+        "name": "Date",
+        "value": "Sun, 1 Nov 2026 18:00:00 +0000"
+      }
+    ]
+  }
+}

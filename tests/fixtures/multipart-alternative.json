@@ -1,0 +1,78 @@
+{
+  "id": "m-alt",
+  "threadId": "t-100",
+  "labelIds": [
+    "INBOX",
+    "UNREAD"
+  ],
+  "snippet": "Hi there",
+  "sizeEstimate": 4096,
+  "historyId": "9001",
+  "internalDate": "1793610900000",
+  "payload": {
+    "partId": "",
+    "mimeType": "multipart/alternative",
+    "filename": "",
+    "headers": [
+      {
+        "name": "From",
+        "value": "Alice Example <alice@example.com>"
+      },
+      {
+        "name": "To",
+        "value": "me@example.com"
+      },
+      {
+        "name": "Subject",
+        "value": "Quarterly invoice"
+      },
+      {
+        "name": "Date",
+        "value": "Mon, 2 Nov 2026 09:15:00 +0000"
+      },
+      {
+        "name": "Message-ID",
+        "value": "<CAF1234@mail.example.com>"
+      },
+      {
+        "name": "Content-Type",
+        "value": "multipart/alternative; boundary=\"b1\""
+      }
+    ],
+    "body": {
+      "size": 0
+    },
+    "parts": [
+      {
+        "partId": "0",
+        "mimeType": "text/plain",
+        "filename": "",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "text/plain; charset=\"UTF-8\""
+          }
+        ],
+        "body": {
+          "size": 19,
+          "data": "UGxhaW4gdmVyc2lvbiB3aW5zLg"
+        }
+      },
+      {
+        "partId": "1",
+        "mimeType": "text/html",
+        "filename": "",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "text/html; charset=\"UTF-8\""
+          }
+        ],
+        "body": {
+          "size": 26,
+          "data": "PHA-SFRNTCB2ZXJzaW9uIGxvc2VzLjwvcD4"
+        }
+      }
+    ]
+  }
+}
